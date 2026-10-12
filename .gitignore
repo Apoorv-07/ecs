@@ -1,0 +1,23 @@
+@'
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+build/
+managed_components/
+sdkconfig.old
+.vscode/
+*.zip
+
+# generated plots (keep the folder)
+dormant_dsp/outputs/*
+!dormant_dsp/outputs/.gitkeep
+
+# helper dumps (they contain copies of all your files)
+/project_context.txt
+/generate_context.py
+/folder_layout.py
+
+# duplicate of dormant_dsp/data/raw/
+/Dormant_CSI_Stable_*.csv
+'@ | Set-Content .gitignore
