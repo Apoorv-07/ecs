@@ -1,3 +1,4 @@
+
 """Live / chunked respiration analysis  (this is what Member 6 calls).
 
     from respiration.live import LiveAnalyzer
@@ -55,10 +56,12 @@ def _amplitude(wave):
 
 class LiveAnalyzer:
     def __init__(self, fs=config.TARGET_FS, win_s=config.WINDOW_S, hop_s=config.HOP_S,
-                 min_coverage=0.5, trust_labels=("good", "fair")):
+                 min_coverage=0.5, trust_labels=("good", "fair"),
+                 min_peak_ratio=config.MIN_PEAK_RATIO):
         self.fs, self.win_s, self.hop_s = fs, win_s, hop_s
         self.min_coverage = min_coverage          # below this valid_frac -> bpm not trusted
         self.trust_labels = trust_labels          # quality labels whose bpm is passed on
+        self.min_peak_ratio = min_peak_ratio      # ...and only if the spectrum has one clear peak
         self.idx = usable_subcarriers()
         self.keep_s = win_s + 2.0                 # buffer length (a little more than a window)
         self.reset()
@@ -143,7 +146,7 @@ class LiveAnalyzer:
         bpm_raw = float(r["bpm"])
         if valid_frac < self.min_coverage:
             status = "low_coverage"
-        elif q["label"] not in self.trust_labels:
+        elif q["label"] not in self.trust_labels or info["peak_ratio"] < self.min_peak_ratio:
             status = "low_quality"
         else:
             status = "ok"

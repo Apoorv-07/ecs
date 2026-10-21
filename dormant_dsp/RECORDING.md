@@ -1,28 +1,23 @@
+
 # Dormant - CSI recording and dataset management (Member 3)
 
-## 1. What the receiver sends today (Task A: written down from `Dormant_RX.c`)
+## 1. What the receiver sends (Task A, updated for the Arduino firmware of 2026-10-21)
 
-| Item | Today |
+| Item | Now |
 |---|---|
-| Link to the PC | USB serial, 115200 baud (default port in the scripts: COM10) |
-| One record | one text line: `CSI_DATA,<rssi>,<v1>,...,<v128>` (130 comma-separated fields) |
-| `v1..v128` | raw CSI bytes as signed ints (-128..127): 64 subcarriers x (imag, real) pairs. The firmware does NOT parse them. |
-| Other lines | ESP boot/log messages (ignored, counted as `other_lines`) |
-| Timestamp | **none** from the board; the PC stamps the arrival time (packets arrive in bursts, so this is coarse) |
-| Packet number | **none** -> lost packets cannot be counted |
-| Sender address | **none**; the receiver listens in promiscuous mode on channel 1 to all data/management frames, so other Wi-Fi devices are captured too (recording shows ~12.7 Hz against the 10 Hz transmitter) |
-| Not available | phase as a separate field, channel/bandwidth, noise floor, packet length (to be confirmed with Member 2) |
+| Link to the PC | USB serial, 115200 baud |
+| One record | `CSI_DATA,<seq>,<esp_ts_us>,<mac>,<rssi>,<v1>,...,<v128>` (133 fields) - the "extended" format |
+| `v1..v128` | signed bytes (-128..127), 64 complex pairs (imag, real); LLTF, 20 MHz, channel 1 |
+| `seq` | **receiver-side counter** of packets that passed the filter. It detects loss inside the receiver (queue drops) but NOT packets lost in the air: the transmitter does not number its packets. Air loss shows up only as time gaps. |
+| `esp_ts_us` | `esp_timer_get_time()` at reception (board clock, microseconds since boot) |
+| `mac` | sender address; the receiver already drops every packet that is not from the transmitter (`68:09:47:5C:2B:F0`) |
+| Dead data | first 4 bytes zeroed by the receiver when `first_word_invalid`; pairs 27-37 are always zero (null tones) |
+| Other lines | `RX_STATS ...` every 5 s (callbacks, other_mac, queue_drops, ...) and boot messages: kept in `raw_serial.log`, counted as `other_lines` |
+| Transmitter | fixed 6 Mbps OFDM, one frame every 100 ms + transmit time: measured 8.2-9.7 Hz, not exactly 10 Hz |
+| Not available | phase as a separate field, noise floor, bandwidth/channel fields, TX packet number |
 
-To confirm with Member 2: is the number of values always exactly 128? (Anything else is rejected as malformed.)
-
-### Proposed extended record (needs Member 2, and Member 1 for the packet number)
-`CSI_DATA,<seq>,<esp_ts_us>,<mac>,<rssi>,<v1>,...,<v128>`  (133 fields)
-* `seq` - packet counter inserted by the transmitter (Member 1) and read by the receiver
-* `esp_ts_us` - `esp_timer_get_time()` at reception (microseconds, board clock)
-* `mac` - sender address, `AA:BB:CC:DD:EE:FF`
-
-The recorder already accepts this format automatically (and `--mac` keeps only our transmitter).
-If Member 2 prefers a different order or format, only `parse_line()` in `ingest/recorder.py` changes.
+Still to confirm with Member 2: whether an `RX_STATS` summary should be saved into metadata.json
+(queue drops are the only loss counter the board has).
 
 ## 2. One session = one folder
 

@@ -1,3 +1,4 @@
+
 import json
 import os
 import tempfile
@@ -201,3 +202,18 @@ def test_preflight():
     clk = FakeClock()
     r = preflight(SimSource(10, 100, False, clk.advance), seconds=5, clock=clk)
     assert r["ok"] and 8 <= r["rate_hz"] <= 11 and r["format"] == "basic"
+
+
+def test_csi_layout_matches_mask_and_flags_drift():
+    clk = FakeClock()
+    with tempfile.TemporaryDirectory() as tmp:
+        m = _rec(tmp, SimSource(10, 1000, False, clk.advance), clk).run()
+        lay = m["csi_layout"]
+        assert lay["mask_matches_config"] and lay["active_pairs_observed"] == 51
+        assert m["validity"] == "valid"
+        # firmware change: another pair goes dead -> flagged
+        m2 = _rec(tmp, SimSource(10, 1000, False, clk.advance, dead_pairs={0, 1, 5, *range(27, 38)}),
+                  clk).run()
+        assert m2["csi_layout"]["dead_pairs_still_used"] == [5]
+        assert m2["validity"] == "valid_with_warnings"
+        assert any("CSI layout differs" in w for w in m2["warnings"])

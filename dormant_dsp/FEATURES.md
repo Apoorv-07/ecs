@@ -1,3 +1,37 @@
+
+
+## Interface contract v1 (confirmed 2026-10-21, for Member 5 to build against)
+
+**CSI layout (current Arduino firmware, LLTF, 20 MHz, channel 1)**
+* A record has 128 signed bytes = 64 complex pairs (imag, real). CSV columns `Subcarrier_1..128`;
+  pair p (0-based) = columns `Subcarrier_{2p+1}`, `Subcarrier_{2p+2}`.
+* **Dead pairs (always zero in S01-S07): 0, 1, 27-37 (13 pairs). Active pairs: 51 = 0-based 2-26 and 38-63.**
+  Pairs 0-1 are zeroed by the receiver (`first_word_invalid`); 27-37 are null/guard tones.
+  This is `NULL_SUBCARRIERS`/`DROP_SUBCARRIER_0` in `config.py`. The recorder compares every new session
+  with this mask (`csi_layout` in metadata.json) and warns if the firmware/configuration drifts.
+* Feature amplitudes are in raw byte units (not calibrated).
+
+**Timestamps**
+* `t_start`, `t_end` = seconds since the FIRST packet of the recording (receiver-PC clock).
+  On S01-S07 the PC clock and the ESP timestamp agree (median spacing 0.100 s on both).
+  Absolute time = first `Timestamp` in `csi_data.csv` + t (PC local time; session timezone is in metadata.json).
+* Rows overlap (60 s window, 10 s hop): never put neighbouring rows of one session in different
+  train/validation/test sets. Split by whole session (and later by participant).
+* Mapping to 30 s sleep epochs (proposal): use the row whose `t_end` equals the epoch end, so the
+  window covers that epoch plus the 30 s before it.
+
+**Respiration rows** (`LiveAnalyzer`): window 60 s, hop 10 s, first row after 60 s.
+* Band 0.1-0.5 Hz = **6-30 breaths/min**. `bpm` is NaN unless `status == "ok"`:
+  quality label fair/good AND `peak_ratio >= 0.6` AND `valid_frac >= 0.5`.
+* Quality fields: `quality_score` 0-1 (label: good >= 0.7, fair >= 0.4), `peak_ratio`, `valid_frac`, `status`.
+* **The schema is frozen; the numbers are NOT validated.** Thresholds are provisional. No recording has an
+  independent reference rate yet. On S01-S07, 1 of 168 windows is trusted, and the `peak_ratio`
+  distribution of the lying/resting sessions is the same as for the empty room and for white noise
+  (median 0.36-0.41, 95th percentile about 0.55). Do NOT use `bpm` as a label or as ground truth.
+  Use `quality_score`, `peak_ratio` and `status` as features and expect `bpm` to be mostly NaN until
+  a paced-breathing session (S08) shows that breathing is detectable.
+
+**Motion rows** (`MotionAnalyzer`): window 3 s, hop 1 s (see below).
 # Respiration feature interface (Member 3 -> Members 4, 5, 6)
 
 Produced by `respiration.live.LiveAnalyzer.push(...)`.

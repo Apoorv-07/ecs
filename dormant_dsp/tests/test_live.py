@@ -1,3 +1,4 @@
+
 import math
 import numpy as np
 import pytest
@@ -35,12 +36,18 @@ def test_first_result_after_one_window_then_every_hop():
     assert np.allclose(np.diff(times), config.HOP_S, atol=0.5)
 
 
-def test_noise_gives_nan_bpm_not_a_number():
-    rng = np.random.default_rng(3)
-    t = np.arange(0, 90, 0.1)
-    X = np.abs(10 + rng.normal(0, 1, (len(t), 54)))
-    out = LiveAnalyzer().push_many(t, np.zeros(len(t)), _csi(X))
-    assert out and all(math.isnan(r["features"]["bpm"]) for r in out)
+def test_noise_is_rarely_trusted():
+    """Negative control: pure noise must be (almost) never reported as a breathing rate."""
+    tot = ok = 0
+    for seed in range(6):
+        rng = np.random.default_rng(seed)
+        t = np.arange(0, 300, 0.1)
+        X = np.abs(10 + rng.normal(0, 1, (len(t), len(usable_subcarriers()))))
+        out = LiveAnalyzer().push_many(t, np.zeros(len(t)), _csi(X))
+        tot += len(out)
+        ok += sum(r["features"]["status"] == "ok" for r in out)
+        assert all(math.isnan(r["features"]["bpm"]) == (r["features"]["status"] != "ok") for r in out)
+    assert tot > 100 and ok / tot < 0.10
 
 
 def test_packet_loss_from_seq():

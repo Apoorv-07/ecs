@@ -1,8 +1,12 @@
+
 """Fake CSI with a known breathing rate, to test the pipeline without hardware."""
 import numpy as np
 
 
-def make_synthetic(bpm=15.0, dur=120.0, fs=10.0, n_sc=54, noise=1.0, seed=0, irregular=False):
+def make_synthetic(bpm=15.0, dur=120.0, fs=10.0, n_sc=None, noise=1.0, seed=0, irregular=False):
+    if n_sc is None:
+        from preprocess.clean import usable_subcarriers
+        n_sc = len(usable_subcarriers())      # follows the mask in config.py
     rng = np.random.default_rng(seed)
     if irregular:   # like the real logger: bursts, jitter and a few long gaps
         t = np.cumsum(rng.choice([0.03, 0.03, 0.1, 0.1, 0.4], size=int(dur * 12)))

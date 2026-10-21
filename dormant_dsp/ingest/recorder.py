@@ -1,3 +1,4 @@
+
 """Controlled CSI recording: one folder per session, with metadata, a log and a quality verdict.
 
     dataset/raw/session_001/
@@ -127,13 +128,17 @@ class SimSource:
     """Fake receiver for testing the whole chain without hardware (--simulate)."""
 
     def __init__(self, rate_hz=10.0, n_lines=None, realtime=True, tick=None, bad_every=0,
-                 bpm=15.0, extended=False, macs=("24:6F:28:AE:11:22",), seed=0):
+                 bpm=15.0, extended=False, macs=("24:6F:28:AE:11:22",), seed=0, dead_pairs=None):
         import random
         self.rate, self.n, self.realtime, self.tick = rate_hz, n_lines, realtime, tick
         self.bad_every, self.bpm, self.extended, self.macs = bad_every, bpm, extended, macs
         self.i = 0
         self.rng = random.Random(seed)
         self.base = [self.rng.randint(-40, 40) for _ in range(N_VALUES)]
+        if dead_pairs is None:                   # behave like the real receiver: dead pairs are zero
+            from preprocess.clean import usable_subcarriers
+            dead_pairs = set(range(N_VALUES // 2)) - set(int(i) for i in usable_subcarriers())
+        self.dead = {b for p in dead_pairs for b in (2 * p, 2 * p + 1)}
 
     def open(self):
         pass
@@ -157,8 +162,9 @@ class SimSource:
             return "CSI_DATA,-50,1,2,3\n"
         t = self.i * dt
         wave = 6.0 * math.sin(2 * math.pi * (self.bpm / 60.0) * t)
-        vals = [max(-128, min(127, int(round(b + wave + self.rng.gauss(0, 1.5)))))
-                for b in self.base]
+        vals = [0 if k in self.dead else
+                max(-128, min(127, int(round(b + wave + self.rng.gauss(0, 1.5)))))
+                for k, b in enumerate(self.base)]
         rssi = -50
         if self.extended:
             mac = self.macs[self.i % len(self.macs)]
@@ -488,11 +494,13 @@ class SessionRecorder:
                       f"{self.malformed} malformed, in {duration:.1f} s.")
 
         csv_path = os.path.join(self.dir, "csi_data.csv")
-        quality = None
+        quality = layout = None
         if os.path.exists(csv_path) and self.saved >= 2:
             try:
                 from ingest.parser import load_csv, validate
-                quality = validate(load_csv(csv_path))
+                rec_in = load_csv(csv_path)
+                quality = validate(rec_in)
+                layout = self._csi_layout(rec_in)
             except Exception as e:
                 quality = {"error": f"quality check failed: {e!r}"}
                 self.log.error(quality["error"])
@@ -500,7 +508,7 @@ class SessionRecorder:
         if not verify["match"]:
             self.log.error(f"csi_data.csv does NOT match raw_serial.log: {verify}")
 
-        validity, reasons, warns, info = self._evaluate(status, duration, quality, verify)
+        validity, reasons, warns, info = self._evaluate(status, duration, quality, verify, layout)
         self.log.info(f"Verdict: {validity}" + (f" ({'; '.join(reasons)})" if reasons else ""))
         self.log.close()                                       # so its hash below is final
 
@@ -522,7 +530,8 @@ class SessionRecorder:
             "counts": {"lines_received": self.lines, "records_saved": self.saved,
                        "malformed": self.malformed, "malformed_reasons": self.reasons,
                        "other_lines": self.other, "filtered_other_mac": self.filtered},
-            "interruptions": self.interruptions, "quality": quality, "raw_vs_csv": verify,
+            "interruptions": self.interruptions, "quality": quality, "csi_layout": layout,
+            "raw_vs_csv": verify,
             "validity": validity, "validity_reasons": reasons, "warnings": warns,
             "info": info, "manual_review": None,
             "log_warning_count": self.log.counts["WARNING"],
@@ -532,7 +541,7 @@ class SessionRecorder:
         self._write_meta(meta)
         return meta
 
-    def _evaluate(self, status, duration, q, verify):
+    def _evaluate(self, status, duration, q, verify, layout=None):
         bad, warn, info = [], [], []
         csi_like = self.saved + self.malformed + self.filtered
         if status != "completed":
@@ -561,6 +570,10 @@ class SessionRecorder:
                 bad.append(f"{q['nan_values']} NaN values in the data")
         elif q and "error" in q:
             warn.append(q["error"])
+        if layout and not layout["mask_matches_config"]:
+            warn.append("CSI layout differs from config.py mask: dead pairs still in use "
+                        f"{layout['dead_pairs_still_used']}, excluded pairs that carry data "
+                        f"{layout['excluded_pairs_with_data']} (firmware/config changed?)")
         if any(not i["recovered"] for i in self.interruptions) and status == "completed":
             warn.append("a data stall was still going on at the end of the session")
         elif self.interruptions:
@@ -573,6 +586,21 @@ class SessionRecorder:
             info.append("no sender address: packets from other devices cannot be filtered")
         validity = "invalid" if bad else ("valid_with_warnings" if warn else "valid")
         return validity, bad, warn, info
+
+    @staticmethod
+    def _csi_layout(rec):
+        """Which of the 64 complex pairs are dead in THIS session, compared with config.py."""
+        import numpy as np
+        from preprocess.clean import usable_subcarriers
+        dead = np.where((np.abs(rec.csi) == 0).all(axis=0))[0].tolist()
+        used = set(int(i) for i in usable_subcarriers())
+        excluded = sorted(set(range(rec.csi.shape[1])) - used)
+        still_used = sorted(set(dead) & used)
+        with_data = sorted(set(excluded) - set(dead))
+        return {"dead_pairs_observed": dead, "active_pairs_observed": rec.csi.shape[1] - len(dead),
+                "pairs_used_by_pipeline": len(used), "excluded_by_config": excluded,
+                "dead_pairs_still_used": still_used, "excluded_pairs_with_data": with_data,
+                "mask_matches_config": not still_used and not with_data}
 
     def _write_meta(self, meta):
         base = {"session_id": self.session_id, "start_time": _iso(self.t0),

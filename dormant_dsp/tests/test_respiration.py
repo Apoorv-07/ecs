@@ -1,4 +1,6 @@
+
 import numpy as np
+from preprocess.clean import usable_subcarriers
 import pytest
 from respiration.pipeline import analyze_window
 from preprocess.clean import hampel, resample_uniform
@@ -25,7 +27,7 @@ def test_irregular_packets_through_full_chain():
 
 def test_pure_noise_gets_poor_quality():
     rng = np.random.default_rng(1)
-    X = np.abs(10 + rng.normal(0, 1, (600, 54)))
+    X = np.abs(10 + rng.normal(0, 1, (600, len(usable_subcarriers()))))
     assert analyze_window(X, np.ones(600, bool))["quality"]["label"] != "good"
 
 
